@@ -34,8 +34,4 @@ public interface ClaimRepository
   @Modifying
   @Query("UPDATE Claim c SET c.status = :status WHERE c.submission.id = :submissionId")
   int updateStatusBySubmissionId(UUID submissionId, ClaimStatus status);
-
-  @Modifying
-  @Query("UPDATE Claim c SET c.hasAssessment = :hasAssessment WHERE c.id = :id")
-  int updateAssessmentStatus(UUID id, boolean hasAssessment);
 }
