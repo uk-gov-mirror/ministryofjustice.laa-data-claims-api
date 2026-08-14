@@ -35,7 +35,11 @@ package uk.gov.justice.laa.dstew.payments.claimsdata.bdd.steps.support;
  * }
  * }</pre>
  *
- * <p>See {@code memory.md} — Step-definition failure reporting (2026-08-13) for the standing rule.
+ * <p>Standing rule (enforced by convention across the {@code bdd/steps} package): every step
+ * definition wraps its body in {@link #step(String, ThrowingRunnable)} (or the {@link
+ * ThrowingSupplier} overload) so a failing assertion or thrown exception surfaces in the JUnit XML
+ * / Cucumber HTML report as {@code [BDD step failed] <context> — <cause>} rather than an opaque
+ * stack trace lacking scenario context.
  */
 public final class BddStepFailures {
 
@@ -68,7 +72,7 @@ public final class BddStepFailures {
   public static void step(String contextDescription, ThrowingRunnable body) {
     try {
       body.run();
-    } catch (Throwable cause) {
+    } catch (Exception | AssertionError cause) {
       throw rethrowAsAssertion(contextDescription, cause);
     }
   }
@@ -80,7 +84,7 @@ public final class BddStepFailures {
   public static <T> T step(String contextDescription, ThrowingSupplier<T> body) {
     try {
       return body.get();
-    } catch (Throwable cause) {
+    } catch (Exception | AssertionError cause) {
       throw rethrowAsAssertion(contextDescription, cause);
     }
   }
