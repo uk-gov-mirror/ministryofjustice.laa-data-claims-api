@@ -82,9 +82,9 @@ public class AmendableClaimFixture {
    * Executes the seed body atomically. {@code Builder} instances are created with {@code new} and
    * are NOT Spring-managed proxies, so a {@code @Transactional} annotation on {@code
    * Builder#seed()} would be a silent no-op (each repository call would commit independently and a
-   * mid-seed failure would leave a partial graph). This template — created from the Spring-managed
-   * {@link PlatformTransactionManager} injected above — is used explicitly to wrap the seed body so
-   * all repository writes join a single transaction.
+   * mid-seed failure would leave a partial graph). This template — created from the
+   * Spring-managed {@link PlatformTransactionManager} injected above — is used explicitly to wrap
+   * the seed body so all repository writes join a single transaction.
    */
   private TransactionTemplate seedTemplate() {
     TransactionTemplate template = new TransactionTemplate(transactionManager);
@@ -286,3 +286,7 @@ public class AmendableClaimFixture {
   /** Result of {@link Builder#seed()}. Records the IDs the caller needs to drive the PATCH call. */
   public record Seeded(UUID submissionId, UUID claimId, Long baselineVersion) {}
 }
+
+
+
+

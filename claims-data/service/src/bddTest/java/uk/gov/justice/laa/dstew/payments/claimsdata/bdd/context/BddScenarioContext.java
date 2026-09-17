@@ -14,8 +14,10 @@ import org.springframework.stereotype.Component;
 @ScenarioScope
 @Getter
 @Setter
-public class BddScenarioContext extends BddResponseContext {
+public class BddScenarioContext {
 
+  private int lastStatusCode;
+  private String lastResponseBody;
   private UUID bulkSubmissionId;
   private final List<UUID> bulkSubmissionIds = new ArrayList<>();
   private final List<UUID> submissionIds = new ArrayList<>();
@@ -50,6 +52,18 @@ public class BddScenarioContext extends BddResponseContext {
   private UUID secondBulkSubmissionId;
   private final List<UUID> firstSubmissionClaimIds = new ArrayList<>();
 
+  // ---------------------------------------------------------------------------
+  // Amendment scenario state (DSTEW-1751 and later amendment features).
+  // ---------------------------------------------------------------------------
+  /** Submission created by a Given step to host the amendment target claim. */
+  private UUID amendmentSubmissionId;
+
+  /** Claim created by a Given step and targeted by the amendment PATCH request. */
+  private UUID amendmentClaimId;
+
+  /** The {@code claim.version} the amendment target claim was seeded with. */
+  private Long amendmentClaimSeededVersion;
+
   /**
    * Overrides the Lombok-generated setter to keep {@link #generatedFileName} in sync with the
    * derived filename. This is the only accessor with non-trivial behaviour.
@@ -60,9 +74,9 @@ public class BddScenarioContext extends BddResponseContext {
         generatedFilePath == null ? null : generatedFilePath.getFileName().toString();
   }
 
-  @Override
   public void clear() {
-    super.clear();
+    lastStatusCode = 0;
+    lastResponseBody = null;
     bulkSubmissionId = null;
     bulkSubmissionIds.clear();
     submissionIds.clear();
@@ -80,5 +94,8 @@ public class BddScenarioContext extends BddResponseContext {
     firstBulkSubmissionId = null;
     secondBulkSubmissionId = null;
     firstSubmissionClaimIds.clear();
+    amendmentSubmissionId = null;
+    amendmentClaimId = null;
+    amendmentClaimSeededVersion = null;
   }
 }

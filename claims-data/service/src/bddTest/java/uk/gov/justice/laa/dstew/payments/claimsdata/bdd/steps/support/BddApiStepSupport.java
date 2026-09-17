@@ -6,13 +6,11 @@ import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestCon
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.BULK_TERMINAL_STATES;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.CREATE_CLAIM_PATH;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.CREATE_SUBMISSION_PATH;
-import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.GET_AMENDMENT_METADATA_REFERENCE_PATH;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.GET_BULK_SUBMISSION_BY_ID_PATH;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.GET_CLAIM_HISTORY_PATH;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.GET_SUBMISSIONS_PATH;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.GET_SUBMISSION_BY_ID_PATH;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.PATCH_BULK_SUBMISSION_PATH;
-import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.PATCH_CLAIM_AMENDMENT_PATH;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.POLL_INTERVAL;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.POST_BULK_SUBMISSION_PATH;
 import static uk.gov.justice.laa.dstew.payments.claimsdata.bdd.config.BddTestConstants.VOID_CLAIM_PATH;
@@ -143,10 +141,9 @@ public class BddApiStepSupport {
     }
 
     context.setLastStatusCode(statusCode);
-    JsonNode responseJson = parseResponseBody(responseBody);
-    context.setLastResponseBody(responseJson);
+    context.setLastResponseBody(responseBody);
     context.setLastOffice(office);
-    hydrateIdsFromResponse(responseJson);
+    hydrateIdsFromResponse(responseBody);
   }
 
   private String resolveContentType(String filename) {
@@ -238,30 +235,6 @@ public class BddApiStepSupport {
   }
 
   /**
-   * Fetches the claim history timeline via {@code GET /api/v1/claims/{claimId}/history}. Returns
-   * the parsed JSON body so scenarios can drill into {@code events[].metadata.changes[]} without
-   * losing the JSON {@code null} vs missing-key distinction that {@link JsonNode} preserves and a
-   * {@code Map<String,Object>} would collapse.
-   */
-  public JsonNode getClaimHistory(UUID claimId) throws IOException {
-    HttpHeaders headers = new HttpHeaders();
-    headers.add(AUTHORIZATION_HEADER, AUTHORIZATION_TOKEN);
-    HttpEntity<Void> request = new HttpEntity<>(headers);
-
-    ResponseEntity<String> response =
-        restTemplate.exchange(
-            serverInfo.baseUrl() + GET_CLAIM_HISTORY_PATH,
-            HttpMethod.GET,
-            request,
-            String.class,
-            claimId);
-    context.setLastStatusCode(response.getStatusCode().value());
-    JsonNode responseJson = parseResponseBody(response.getBody());
-    context.setLastResponseBody(responseJson);
-    return responseJson;
-  }
-
-  /**
    * Fetches the persisted submission record for the most recent upload. Useful for assertions that
    * the submission entity was actually saved.
    */
@@ -297,6 +270,29 @@ public class BddApiStepSupport {
             request,
             String.class,
             bulkSubmissionId);
+    return objectMapper.readTree(response.getBody());
+  }
+
+  /**
+   * Fetches the unified claim-history timeline for {@code claimId} via {@code GET
+   * /api/v1/claims/{claimId}/history}. Returns the raw {@link JsonNode} so callers can distinguish
+   * an explicit JSON {@code null} in the metadata bag from a missing key — a critical distinction
+   * for the claim-history timeline scenarios (DSTEW-1811 / -1812 / -1813 / -1814 / -1815).
+   */
+  public JsonNode getClaimHistory(UUID claimId) throws IOException {
+    HttpHeaders headers = new HttpHeaders();
+    headers.add(AUTHORIZATION_HEADER, AUTHORIZATION_TOKEN);
+    HttpEntity<Void> request = new HttpEntity<>(headers);
+
+    ResponseEntity<String> response =
+        restTemplate.exchange(
+            serverInfo.baseUrl() + GET_CLAIM_HISTORY_PATH,
+            HttpMethod.GET,
+            request,
+            String.class,
+            claimId);
+    context.setLastStatusCode(response.getStatusCode().value());
+    context.setLastResponseBody(response.getBody());
     return objectMapper.readTree(response.getBody());
   }
 
@@ -358,49 +354,11 @@ public class BddApiStepSupport {
               new HttpEntity<>(body, headers),
               String.class,
               claimId);
-      context.setLastStatusCode(response.getStatusCode().value());
-      context.setLastResponseBody(parseResponseBody(response.getBody()));
       return response.getStatusCode().value();
     } catch (HttpStatusCodeException ex) {
       // Preserve the response body in the context so the step can log/assert against it.
-      context.setLastStatusCode(ex.getStatusCode().value());
-      context.setLastResponseBody(parseResponseBody(ex.getResponseBodyAsString()));
+      context.setLastResponseBody(ex.getResponseBodyAsString());
       return ex.getStatusCode().value();
-    }
-  }
-
-  private JsonNode parseResponseBody(String responseBody) {
-    if (responseBody == null || responseBody.isBlank()) {
-      return null;
-    }
-    try {
-      return objectMapper.readTree(responseBody);
-    } catch (IOException ex) {
-      throw new IllegalStateException("Failed to parse API response body as JSON", ex);
-    }
-  }
-
-  private void hydrateIdsFromResponse(JsonNode json) {
-    if (json == null) {
-      return;
-    }
-
-    JsonNode bulkSubmissionNode = json.path("bulk_submission_id");
-    if (!bulkSubmissionNode.isMissingNode() && !bulkSubmissionNode.isNull()) {
-      UUID bulkSubmissionId = UUID.fromString(bulkSubmissionNode.asText());
-      context.setBulkSubmissionId(bulkSubmissionId);
-      context.getBulkSubmissionIds().add(bulkSubmissionId);
-    }
-
-    JsonNode submissionIdsNode = json.path("submission_ids");
-    if (submissionIdsNode.isArray()) {
-      Set<UUID> existing = new HashSet<>(context.getSubmissionIds());
-      for (JsonNode submissionIdNode : submissionIdsNode) {
-        UUID id = UUID.fromString(submissionIdNode.asText());
-        if (!existing.contains(id)) {
-          context.getSubmissionIds().add(id);
-        }
-      }
     }
   }
 
@@ -529,71 +487,28 @@ public class BddApiStepSupport {
         bulkSubmissionId);
   }
 
-  // ---------------------------------------------------------------------------
-  // PATCH claim amendment (used by BDD scenarios that exercise the amendment
-  // metadata validation flow via PATCH /api/v1/submissions/{sid}/claims/{cid}).
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Sends a PATCH to the amendment endpoint and captures the resulting status code and JSON body on
-   * the scenario context. Unlike normal RestTemplate calls, this does <em>not</em> throw on 4xx/5xx
-   * responses — the scenario itself asserts on the outcome. The {@code patchJson} argument must be
-   * a JSON string carrying a {@code ClaimPatch} shape (snake_case field names).
-   */
-  public void patchClaimAmendment(UUID submissionId, UUID claimId, String patchJson) {
-    HttpHeaders headers = new HttpHeaders();
-    headers.setContentType(MediaType.APPLICATION_JSON);
-    headers.add(AUTHORIZATION_HEADER, AUTHORIZATION_TOKEN);
-
-    try {
-      ResponseEntity<String> response =
-          restTemplate.exchange(
-              serverInfo.baseUrl() + PATCH_CLAIM_AMENDMENT_PATH,
-              HttpMethod.PATCH,
-              new HttpEntity<>(patchJson, headers),
-              String.class,
-              submissionId,
-              claimId);
-      context.setLastStatusCode(response.getStatusCode().value());
-      context.setLastResponseBody(parseBodyOrNull(response.getBody()));
-    } catch (HttpStatusCodeException ex) {
-      context.setLastStatusCode(ex.getStatusCode().value());
-      context.setLastResponseBody(parseBodyOrNull(ex.getResponseBodyAsString()));
+  private void hydrateIdsFromResponse(String responseBody) throws IOException {
+    if (responseBody == null || responseBody.isBlank()) {
+      return;
     }
-  }
+    JsonNode json = objectMapper.readTree(responseBody);
 
-  private JsonNode parseBodyOrNull(String body) {
-    if (body == null || body.isBlank()) {
-      return null;
+    JsonNode bulkSubmissionNode = json.path("bulk_submission_id");
+    if (!bulkSubmissionNode.isMissingNode() && !bulkSubmissionNode.isNull()) {
+      UUID bulkSubmissionId = UUID.fromString(bulkSubmissionNode.asText());
+      context.setBulkSubmissionId(bulkSubmissionId);
+      context.getBulkSubmissionIds().add(bulkSubmissionId);
     }
-    try {
-      return objectMapper.readTree(body);
-    } catch (IOException ex) {
-      return null;
-    }
-  }
 
-  /**
-   * Calls {@code GET /api/v1/system/references/amendment-requested-by} — the amendment metadata
-   * reference lookup — and captures the status code + parsed JSON body on the scenario context.
-   * Non-2xx responses are captured on the context rather than thrown so scenarios can assert on
-   * error shapes.
-   */
-  public void getAmendmentMetadataReferenceLookup() {
-    HttpHeaders headers = new HttpHeaders();
-    headers.add(AUTHORIZATION_HEADER, AUTHORIZATION_TOKEN);
-    try {
-      ResponseEntity<String> response =
-          restTemplate.exchange(
-              serverInfo.baseUrl() + GET_AMENDMENT_METADATA_REFERENCE_PATH,
-              HttpMethod.GET,
-              new HttpEntity<>(headers),
-              String.class);
-      context.setLastStatusCode(response.getStatusCode().value());
-      context.setLastResponseBody(parseBodyOrNull(response.getBody()));
-    } catch (HttpStatusCodeException ex) {
-      context.setLastStatusCode(ex.getStatusCode().value());
-      context.setLastResponseBody(parseBodyOrNull(ex.getResponseBodyAsString()));
+    JsonNode submissionIdsNode = json.path("submission_ids");
+    if (submissionIdsNode.isArray()) {
+      Set<UUID> existing = new HashSet<>(context.getSubmissionIds());
+      for (JsonNode submissionIdNode : submissionIdsNode) {
+        UUID id = UUID.fromString(submissionIdNode.asText());
+        if (!existing.contains(id)) {
+          context.getSubmissionIds().add(id);
+        }
+      }
     }
   }
 }

@@ -6,10 +6,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import io.cucumber.datatable.DataTable;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
+import io.cucumber.java.en.When;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import uk.gov.justice.laa.dstew.payments.claimsdata.bdd.steps.support.BddApiStepSupport;
@@ -40,7 +43,7 @@ import uk.gov.justice.laa.dstew.payments.claimsdata.util.Uuid7;
  * {@code JdbcClaimHistoryRepositoryIntegrationTest}.
  */
 @Slf4j
-public class ClaimHistoryAmendmentChangesDetailSteps extends ClaimHistoryTimelineSharedSteps {
+public class ClaimHistoryAmendmentChangesDetailSteps {
 
   private static final String BDD_USER_ID = "bdd-user-1814";
   private static final String AMENDMENT_EVENT_TYPE = "AMENDMENT";
@@ -50,7 +53,11 @@ public class ClaimHistoryAmendmentChangesDetailSteps extends ClaimHistoryTimelin
   @Autowired private ClaimRepository claimRepository;
   @Autowired private ClaimAmendmentRepository claimAmendmentRepository;
 
-  // Scenario-scoped state is stored in ClaimHistoryTimelineSharedSteps / ClaimHistoryContext.
+  // Scenario-scoped state. Cucumber instantiates one step class per scenario, so plain fields are
+  // safe (no @ScenarioScope needed).
+  private UUID currentClaimId;
+  private JsonNode lastHistoryResponse;
+  private JsonNode lastAmendmentEvent;
 
   // ---------------------------------------------------------------------------
   // Given — seed a claim + a successful claim_amendment carrying the diff under test
@@ -101,6 +108,13 @@ public class ClaimHistoryAmendmentChangesDetailSteps extends ClaimHistoryTimelin
   // ---------------------------------------------------------------------------
   // When
   // ---------------------------------------------------------------------------
+
+  @When("I request the claim history timeline")
+  public void iRequestTheClaimHistoryTimeline() throws IOException {
+    assertThat(currentClaimId).as("claim must be seeded before requesting history").isNotNull();
+    lastHistoryResponse = api.getClaimHistory(currentClaimId);
+    lastAmendmentEvent = findAmendmentEvent(lastHistoryResponse);
+  }
 
   // ---------------------------------------------------------------------------
   // Then — array size / entry presence
@@ -214,7 +228,7 @@ public class ClaimHistoryAmendmentChangesDetailSteps extends ClaimHistoryTimelin
                 .createdByUserId(BDD_USER_ID)
                 .build());
 
-    setCurrentClaimId(claim.getId());
+    currentClaimId = claim.getId();
   }
 
   private void persistAmendment(String diffJson) {
@@ -235,30 +249,10 @@ public class ClaimHistoryAmendmentChangesDetailSteps extends ClaimHistoryTimelin
 
   /**
    * Builds a {@code {"schema_version":1,"changes":[...]}} JSONB string from a scenario data table.
-   *
-   * <p>Every emitted {@code changes[]} entry ALWAYS carries all four keys ({@code
-   * field_identifier}, {@code change_source}, {@code before}, {@code after}) — this matches the
-   * delivered wire contract, where {@code DiffEntry.before} / {@code DiffEntry.after} are
-   * non-optional and a cleared field is represented by an explicit JSON {@code null}.
-   *
-   * <p>Accepted column shapes for the {@code before} / {@code after} sides (see {@link
-   * #resolveSide}):
-   *
-   * <ul>
-   *   <li>{@code before_value} / {@code after_value} — bare literal (default form).
-   *   <li>{@code before} / {@code after} — bare literal (alternate spelling used by some
-   *       scenarios).
-   *   <li>{@code before_present} / {@code after_present} paired with {@code before_value} / {@code
-   *       after_value} — legacy tri-state form retained ONLY for de-scoped {@code @DS1814_4}. On
-   *       the shipped contract {@code present=false} collapses to JSON {@code null}, identical to
-   *       an explicit cleared value.
-   * </ul>
-   *
-   * <p>If the column is omitted entirely the emitted key is JSON {@code null} (i.e. treated the
-   * same as an explicit cleared value — the contract has no "omit key" case).
-   *
-   * <p>{@code change_source} is REQUIRED on every row; a missing / blank value fails fast at seed
-   * time (see {@link #normaliseChangeSource}).
+   * Accepts either the flat {@code before_value / after_value} columns (default) or the {@code
+   * *_present / *_value} pair — when {@code *_present=true} and {@code *_value="null"} an explicit
+   * JSON {@code null} is emitted for that side. If a column is omitted entirely the entry omits
+   * that key (used by the "unchanged fields" scenario shape).
    */
   private String buildDiffJson(DataTable table) {
     List<Map<String, String>> rows = table.asMaps(String.class, String.class);
@@ -364,8 +358,7 @@ public class ClaimHistoryAmendmentChangesDetailSteps extends ClaimHistoryTimelin
   }
 
   private JsonNode requireChangesArray() {
-    JsonNode amendmentEvent = findAmendmentEvent(getLastResponse());
-    JsonNode changes = amendmentEvent.path("metadata").path("changes");
+    JsonNode changes = lastAmendmentEvent.path("metadata").path("changes");
     assertThat(changes.isArray()).as("AMENDMENT event metadata.changes must be an array").isTrue();
     return changes;
   }
